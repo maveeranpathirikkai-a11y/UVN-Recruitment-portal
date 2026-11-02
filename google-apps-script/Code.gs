@@ -81,23 +81,25 @@ function doPost(e) {
     // Wait up to 30 seconds for lock
     lock.waitLock(30000);
 
-    let requestData;
-    try {
-      requestData = JSON.parse(e.postData.contents);
-    } catch (parseErr) {
-      return createJsonResponse({
-        status: "error",
-        message: "Invalid JSON payload."
-      }, 400);
+    let requestData = {};
+    if (e && e.postData && e.postData.contents) {
+      try {
+        requestData = JSON.parse(e.postData.contents);
+      } catch (parseErr) {
+        requestData = e.parameter || {};
+      }
+    } else if (e && e.parameter) {
+      requestData = e.parameter;
     }
 
-    const action = requestData.action || "submitApplication";
+    const action = requestData.action || (e && e.parameter ? e.parameter.action : null) || "submitApplication";
+    const payload = requestData.payload || requestData;
 
     if (action === "submitApplication") {
-      return handleApplicationSubmission(requestData.payload);
+      return handleApplicationSubmission(payload);
     } else if (action === "updateStatus") {
       // Admin status update
-      const token = requestData.token;
+      const token = requestData.token || (e && e.parameter ? e.parameter.token : null);
       if (token !== ADMIN_API_KEY) {
         return createJsonResponse({
           status: "error",
@@ -134,11 +136,23 @@ function handleApplicationSubmission(payload) {
     return createJsonResponse({ status: "error", message: "Payload is empty." }, 400);
   }
 
+  // Normalize field aliases to support both shorthand and full property names
+  payload.fullName = payload.name || payload.fullName || "";
+  payload.mobileNumber = payload.mobile || payload.mobileNumber || "";
+  payload.positionAppliedFor = payload.position || payload.positionAppliedFor || "";
+  payload.workType = payload.workType || "Full-time";
+  payload.educationalQualification = payload.education || payload.educationalQualification || "";
+  payload.journalismExperience = payload.experience || payload.journalismExperience || "No";
+  payload.experienceYears = payload.experienceYears || "0";
+  if (payload.consent1 === undefined && payload.consentAccurate !== undefined) payload.consent1 = payload.consentAccurate ? "Yes" : "";
+  if (payload.consent2 === undefined && payload.consentRecruitment !== undefined) payload.consent2 = payload.consentRecruitment ? "Yes" : "";
+  if (payload.consent3 === undefined && payload.consentContact !== undefined) payload.consent3 = payload.consentContact ? "Yes" : "";
+
   // 1. Validate required fields
   const requiredFields = [
     "state", "district", "taluk", "fullName", "mobileNumber", 
     "email", "residentialAddress", "pinCode", "positionAppliedFor", 
-    "educationalQualification", "journalismExperience", "consent1", "consent2", "consent3"
+    "educationalQualification", "journalismExperience"
   ];
 
   for (let i = 0; i < requiredFields.length; i++) {

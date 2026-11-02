@@ -160,12 +160,16 @@ const INITIAL_APPLICATIONS: ApplicationRecord[] = [
   }
 ];
 
+import { GOOGLE_APPS_SCRIPT_URL } from '../config';
+
 export class ApiService {
   /**
    * Get configured Google Apps Script Web App URL
+   * Prioritizes localStorage override (configured via admin settings),
+   * then GOOGLE_APPS_SCRIPT_URL from config, then Vite environment variable.
    */
   static getGasUrl(): string {
-    return localStorage.getItem(GAS_URL_KEY) || import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || '';
+    return localStorage.getItem(GAS_URL_KEY) || GOOGLE_APPS_SCRIPT_URL || import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || '';
   }
 
   /**
@@ -210,7 +214,7 @@ export class ApiService {
     if (!url) {
       return {
         success: false,
-        message: 'No Google Apps Script Web App URL configured. Using local secure storage mode.'
+        message: 'No Google Apps Script Web App URL configured.'
       };
     }
 
@@ -221,7 +225,26 @@ export class ApiService {
         headers: { 'Accept': 'application/json' }
       });
       
-      const json = await response.json();
+      const text = await response.text();
+
+      // Check if redirected to Google Accounts login (Auth required)
+      if (text.includes('accounts.google.com') || text.includes('Sign in - Google Accounts') || response.status === 401) {
+        return {
+          success: false,
+          message: 'Google Apps Script requires Authorization (HTTP 401 / Sign-in). The Web App must be deployed with "Who has access: Anyone" in Google Apps Script deployment settings.'
+        };
+      }
+
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        return {
+          success: false,
+          message: `Endpoint returned non-JSON response (HTTP ${response.status}). Ensure the Web App URL is correct.`
+        };
+      }
+
       if (json.status === 'success') {
         return {
           success: true,
@@ -237,16 +260,16 @@ export class ApiService {
     } catch (err: any) {
       return {
         success: false,
-        message: `Connection failed: ${err.message || 'Network error or CORS limitation'}. Ensure Web App is deployed with access set to "Anyone".`
+        message: `Connection failed: ${err.message || 'Network error or CORS limitation'}. Check that the Web App is deployed with access set to "Anyone".`
       };
     }
   }
 
   /**
-   * Submit Application
-   * First checks duplicate mobile/email.
-   * If GAS URL is configured, dispatches to Google Apps Script.
-   * Also stores locally for instant admin access.
+   * Submit Candidate Application
+   * Maps all fields explicitly to backend properties.
+   * Dispatches to the deployed Google Apps Script Web App endpoint.
+   * Inspects network and CORS response without faking success.
    */
   static async submitApplication(formData: ApplicationFormData): Promise<{
     success: boolean;
@@ -254,11 +277,11 @@ export class ApiService {
     message: string;
     isDuplicate?: boolean;
   }> {
+    // 1. Client-side duplicate check against local storage
     const apps = this.getStoredApplications();
     const cleanMobile = formData.mobileNumber.replace(/[^0-9]/g, '');
     const cleanEmail = formData.email.trim().toLowerCase();
 
-    // 1. Duplicate check
     const existing = apps.find(a => 
       a.mobileNumber.replace(/[^0-9]/g, '') === cleanMobile || 
       a.email.trim().toLowerCase() === cleanEmail
@@ -269,68 +292,166 @@ export class ApiService {
         success: false,
         isDuplicate: true,
         applicationId: existing.applicationId,
-        message: 'Duplicate application detected! An application has already been submitted with this Mobile Number or Email.'
+        message: `A recruitment application has already been registered with this mobile number (${cleanMobile}) or email address. Duplicate applications are not allowed.`
       };
     }
 
-    // 2. Generate sequential unique Application ID
-    const year = new Date().getFullYear();
-    const nextSeq = apps.length + 1;
-    const seqStr = String(nextSeq).padStart(6, '0');
-    const newApplicationId = `UVN-${year}-${seqStr}`;
-
-    const newRecord: ApplicationRecord = {
-      ...formData,
-      id: `app-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      applicationId: newApplicationId,
-      applicationStatus: 'New',
-      timestamp: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-      recruitmentNotes: ''
-    };
-
-    // 3. Dispatch to Google Apps Script if URL configured
     const gasUrl = this.getGasUrl();
-    if (gasUrl) {
-      try {
-        const payload = {
-          action: 'submitApplication',
-          payload: {
-            ...formData,
-            applicationId: newApplicationId
-          }
-        };
-
-        // Note: Google Apps Script Web Apps often require POST with text/plain to avoid CORS preflight failures
-        const gasResponse = await fetch(gasUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-        });
-
-        const gasResult = await gasResponse.json();
-        if (gasResult.status === 'duplicate') {
-          return {
-            success: false,
-            isDuplicate: true,
-            applicationId: gasResult.applicationId,
-            message: gasResult.message
-          };
-        }
-      } catch (gasErr) {
-        console.warn('Could not post directly to Google Apps Script endpoint, saved locally:', gasErr);
-      }
+    if (!gasUrl) {
+      return {
+        success: false,
+        message: 'Google Apps Script Web App URL is not configured. Please configure GOOGLE_APPS_SCRIPT_URL.'
+      };
     }
 
-    // 4. Save to local storage
-    apps.unshift(newRecord);
-    this.saveApplications(apps);
-
-    return {
-      success: true,
-      applicationId: newApplicationId,
-      message: 'Your application has been submitted successfully.'
+    // 2. Explicitly map frontend form fields to backend properties:
+    // state, district, taluk, name, mobile, email, position, workType, education, experience, experienceYears
+    const payload = {
+      action: 'submitApplication',
+      payload: {
+        state: formData.state,
+        district: formData.district,
+        taluk: formData.taluk,
+        villageTown: formData.villageTown || '',
+        name: formData.fullName,
+        fullName: formData.fullName,
+        guardianName: formData.guardianName || '',
+        dateOfBirth: formData.dateOfBirth || '',
+        gender: formData.gender || '',
+        mobile: formData.mobileNumber,
+        mobileNumber: formData.mobileNumber,
+        whatsAppNumber: formData.whatsAppNumber || formData.mobileNumber,
+        email: formData.email,
+        residentialAddress: formData.residentialAddress,
+        pinCode: formData.pinCode,
+        position: formData.positionAppliedFor,
+        positionAppliedFor: formData.positionAppliedFor,
+        preferredReportingArea: formData.preferredReportingArea || '',
+        preferredDistrictTaluk: formData.preferredDistrictTaluk || '',
+        workType: formData.workType || 'Full-time',
+        travelAvailability: formData.travelAvailability || 'Yes',
+        drivingLicence: formData.drivingLicence || 'No',
+        cameraAvailability: formData.cameraAvailability || 'N/A',
+        smartphoneAvailability: formData.smartphoneAvailability || 'Yes',
+        videoReportingAbility: formData.videoReportingAbility || 'No',
+        tamilNewsWritingAbility: formData.tamilNewsWritingAbility || 'Yes',
+        education: formData.educationalQualification,
+        educationalQualification: formData.educationalQualification,
+        courseName: formData.courseName || '',
+        institutionName: formData.institutionName || '',
+        languagesKnown: formData.languagesKnown || ['Tamil'],
+        experience: formData.journalismExperience,
+        journalismExperience: formData.journalismExperience,
+        experienceYears: formData.experienceYears || '0',
+        previousOrganisation: formData.previousOrganisation || '',
+        previousDesignation: formData.previousDesignation || '',
+        previousWorkDetails: formData.previousWorkDetails || '',
+        portfolioUrl: formData.portfolioUrl || '',
+        youtubeUrl: formData.youtubeUrl || '',
+        joiningDate: formData.preferredJoiningDate || '',
+        relevantSkills: formData.relevantSkills || '',
+        motivation: formData.motivation || '',
+        references: formData.references || '',
+        identityReference: formData.identityReference || '',
+        consent1: formData.consentAccurate ? 'Yes' : '',
+        consent2: formData.consentRecruitment ? 'Yes' : '',
+        consent3: formData.consentContact ? 'Yes' : '',
+        consentAccurate: formData.consentAccurate,
+        consentRecruitment: formData.consentRecruitment,
+        consentContact: formData.consentContact,
+        resumeBase64: formData.resumeBase64 || '',
+        resumeFileName: formData.resumeFileName || '',
+        certificateBase64: formData.certificateBase64 || '',
+        certificateFileName: formData.certificateFileName || '',
+        photoBase64: formData.photoBase64 || '',
+        photoFileName: formData.photoFileName || '',
+        workSampleBase64: formData.workSampleBase64 || '',
+        workSampleFileName: formData.workSampleFileName || ''
+      }
     };
+
+    // 3. Dispatch to Google Apps Script endpoint using POST and text/plain to avoid CORS preflight rejection
+    try {
+      const response = await fetch(gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+
+      const responseText = await response.text();
+
+      // Check for Google Auth redirect or 401
+      if (response.status === 401 || responseText.includes('accounts.google.com') || responseText.includes('Sign in - Google Accounts')) {
+        return {
+          success: false,
+          message: 'Google Apps Script Access Restriction (HTTP 401): The Web App currently requires Google Account sign-in. To allow candidates to submit, in Google Apps Script editor click: Deploy > Manage deployments > Edit > set "Who has access" to "Anyone", then click Deploy.'
+        };
+      }
+
+      let result: any;
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        return {
+          success: false,
+          message: `Backend returned non-JSON response (HTTP ${response.status}): ${responseText.slice(0, 150)}`
+        };
+      }
+
+      // Check duplicate status from server
+      if (result.status === 'duplicate') {
+        return {
+          success: false,
+          isDuplicate: true,
+          applicationId: result.applicationId,
+          message: result.message || 'Duplicate application detected on server.'
+        };
+      }
+
+      // Check error status from server
+      if (result.status === 'error') {
+        return {
+          success: false,
+          message: result.message || 'Server rejected the application submission.'
+        };
+      }
+
+      // Confirmed success from backend!
+      if (result.status === 'success' && result.applicationId) {
+        const confirmedAppId = result.applicationId;
+
+        // Cache confirmed record locally for instant administrative review
+        const newRecord: ApplicationRecord = {
+          ...formData,
+          id: `app-${Date.now()}`,
+          applicationId: confirmedAppId,
+          applicationStatus: 'New',
+          timestamp: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+          recruitmentNotes: ''
+        };
+        apps.unshift(newRecord);
+        this.saveApplications(apps);
+
+        return {
+          success: true,
+          applicationId: confirmedAppId,
+          message: 'Your application has been submitted successfully to UNGAL VIJAY NAALITHAZH Google Sheets.'
+        };
+      }
+
+      return {
+        success: false,
+        message: result.message || 'Unexpected response format from Google Apps Script backend.'
+      };
+
+    } catch (fetchErr: any) {
+      console.error('Apps Script Submission Error:', fetchErr);
+      return {
+        success: false,
+        message: `Network/CORS submission error: ${fetchErr.message || 'Failed to connect to Google Apps Script'}. Ensure the Google Apps Script Web App is deployed with "Who has access: Anyone".`
+      };
+    }
   }
 
   /**
