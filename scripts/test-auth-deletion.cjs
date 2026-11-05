@@ -114,7 +114,7 @@ function generateSignedSessionToken(username, role, customExpSec) {
   const secret = mockScriptProperties['ADMIN_JWT_SECRET'];
   const header = { alg: 'HS256', typ: 'JWT' };
   const nowSec = Math.floor(Date.now() / 1000);
-  const expSec = customExpSec !== undefined ? customExpSec : (nowSec + 7200);
+  const expSec = customExpSec !== undefined ? customExpSec : (nowSec + 1800); // 30 minutes (1800s)
   
   const payload = {
     sub: username,

@@ -626,7 +626,7 @@ export class ApiService {
             token: result.token,
             expiresAt: result.expiresAt
           },
-          expiresAt: result.expiresAt || (Date.now() + 2 * 3600 * 1000),
+          expiresAt: result.expiresAt || (Date.now() + 30 * 60 * 1000),
           message: result.message || 'Authenticated successfully.'
         };
       }

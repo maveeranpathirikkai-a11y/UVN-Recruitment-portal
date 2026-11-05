@@ -124,7 +124,7 @@ function generateSignedSessionToken(username, role) {
   const secret = getOrCreateJwtSecret();
   const header = { alg: "HS256", typ: "JWT" };
   const nowSec = Math.floor(Date.now() / 1000);
-  const expSec = nowSec + (2 * 3600); // 2 hours validity
+  const expSec = nowSec + (30 * 60); // 30 minutes validity (1800 seconds)
   
   const payload = {
     sub: username,
@@ -244,7 +244,7 @@ function handleAdminLogin(payload) {
   const ss = getOrCreateSpreadsheet();
   
   if (!userMatches || !passMatches) {
-    logActivity(ss, "AUTH", "LOGIN_FAILED", "Failed admin login attempt for user: " + sanitize(username), username);
+    logActivity(ss, "N/A", "ADMIN_LOGIN", "Failed admin login attempt for user: " + sanitize(username), username, "FAILED");
     return createJsonResponse({
       success: false,
       error: "Invalid administrative username or password."
@@ -252,7 +252,7 @@ function handleAdminLogin(payload) {
   }
   
   const tokenData = generateSignedSessionToken(username, "admin");
-  logActivity(ss, "AUTH", "LOGIN_SUCCESS", "Admin " + username + " authenticated successfully.", username);
+  logActivity(ss, "N/A", "ADMIN_LOGIN", "Admin " + username + " authenticated successfully.", username, "SUCCESS");
   
   return createJsonResponse({
     success: true,
@@ -813,25 +813,17 @@ function handleApplicationRemoval(payload) {
     }, 401);
   }
 
-  let adminIdentity = "admin";
   const tokenCheck = verifyAdminSessionToken(token);
-  if (tokenCheck.valid) {
-    adminIdentity = tokenCheck.username;
-  } else {
-    // Check fallback API key
-    const props = PropertiesService.getScriptProperties();
-    const storedApiKey = props.getProperty("ADMIN_API_KEY") || ADMIN_API_KEY;
-    if (storedApiKey && timingSafeEqual(String(token).trim(), storedApiKey)) {
-      adminIdentity = "admin (API Key)";
-    } else {
-      const ss = getOrCreateSpreadsheet();
-      logActivity(ss, String(payload.applicationId || "N/A"), "DELETE_UNAUTHORIZED", "Unauthorized delete attempt: " + (tokenCheck.error || "invalid token"));
-      return createJsonResponse({
-        success: false,
-        error: tokenCheck.error || "Unauthorized: Invalid or expired administrator session token."
-      }, 401);
-    }
+  if (!tokenCheck.valid) {
+    const ss = getOrCreateSpreadsheet();
+    logActivity(ss, String(payload.applicationId || "N/A"), "APPLICATION_DELETION", "Unauthorized delete attempt: " + (tokenCheck.error || "invalid token"), "Unauthorized User", "FAILED");
+    return createJsonResponse({
+      success: false,
+      error: tokenCheck.error || "Unauthorized: Invalid or expired administrator session token."
+    }, 401);
   }
+
+  const adminIdentity = tokenCheck.username;
 
   const appId = payload.applicationId || (payload.payload && payload.payload.applicationId);
   if (!appId || String(appId).trim() === "") {
@@ -885,8 +877,8 @@ function handleApplicationRemoval(payload) {
   // Delete ONLY this single application row
   appSheet.deleteRow(targetRowIndex);
 
-  // Record action in Activity Log with admin identity, timestamp, action and Application ID
-  logActivity(ss, cleanAppId, "APPLICATION_DELETED", "Application for " + (candidateName || "Candidate") + " (" + cleanAppId + ") was permanently deleted by administrator " + adminIdentity + ".", adminIdentity);
+  // Record action in Activity Log with admin identity, timestamp, action, details, and result
+  logActivity(ss, cleanAppId, "APPLICATION_DELETED", "Application for " + (candidateName || "Candidate") + " (" + cleanAppId + ") was permanently deleted.", adminIdentity, "SUCCESS");
 
   return createJsonResponse({
     success: true,
@@ -1257,20 +1249,23 @@ function getLocationMasterData() {
 
 /**
  * Record action in Activity Log
+ * Columns: Timestamp | Administrator Identity | Application ID | Action | Details | Result
+ * Never records passwords or signing secrets.
  */
-function logActivity(ss, applicationId, actionType, details, adminUser) {
+function logActivity(ss, applicationId, actionType, details, adminUser, resultStatus) {
   try {
     let logSheet = ss.getSheetByName("Activity Log");
     if (!logSheet) {
       logSheet = ss.insertSheet("Activity Log");
-      logSheet.appendRow(["Timestamp", "Application ID", "Action", "Details", "Performed By"]);
+      logSheet.appendRow(["Timestamp", "Administrator Identity", "Application ID", "Action", "Details", "Result"]);
     }
     logSheet.appendRow([
       new Date(),
-      applicationId,
+      adminUser || Session.getActiveUser().getEmail() || "System",
+      applicationId || "N/A",
       actionType,
       details,
-      adminUser || Session.getActiveUser().getEmail() || "System"
+      resultStatus || "SUCCESS"
     ]);
   } catch (err) {
     Logger.log("Failed to log activity: " + err);
