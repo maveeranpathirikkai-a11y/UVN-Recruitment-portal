@@ -1,6 +1,6 @@
 import React from 'react';
 import { ApplicationRecord, Language } from '../../types';
-import { Users, Calendar, Newspaper, Camera, Video, Clock, Award, Sparkles } from 'lucide-react';
+import { Users, Newspaper, Camera, Video, Clock, Award, MapPin } from 'lucide-react';
 
 interface KPICardsProps {
   applications: ApplicationRecord[];
@@ -11,17 +11,31 @@ export const KPICards: React.FC<KPICardsProps> = ({ applications, currentLang })
   const total = applications.length;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayCount = applications.filter(a => a.timestamp && a.timestamp.startsWith(todayStr)).length;
+  const todayCount = applications.filter(a => a.timestamp && String(a.timestamp).startsWith(todayStr)).length;
 
-  const reporters = applications.filter(a => a.positionAppliedFor === 'Reporter').length;
-  const photojournalists = applications.filter(a => a.positionAppliedFor === 'Photojournalist').length;
-  const videoJournalists = applications.filter(a => a.positionAppliedFor === 'Video Journalist').length;
+  const reporters = applications.filter(a => (a.position || a.positionAppliedFor) === 'Reporter').length;
+  const photojournalists = applications.filter(a => (a.position || a.positionAppliedFor) === 'Photojournalist').length;
+  const videoJournalists = applications.filter(a => (a.position || a.positionAppliedFor) === 'Video Journalist').length;
 
-  const fullTime = applications.filter(a => a.workType === 'Full-time').length;
+  const fullTime = applications.filter(a => (a.workType || 'Full-time') === 'Full-time').length;
   const partTime = applications.filter(a => a.workType === 'Part-time').length;
 
-  const experienced = applications.filter(a => a.journalismExperience === 'Yes').length;
-  const freshers = applications.filter(a => a.journalismExperience === 'No').length;
+  const experienced = applications.filter(a => String(a.experience || a.journalismExperience || '').toLowerCase() === 'yes').length;
+  const freshers = applications.filter(a => String(a.experience || a.journalismExperience || '').toLowerCase() !== 'yes').length;
+
+  // District-wise distribution
+  const districtCounts: Record<string, number> = {};
+  applications.forEach(a => {
+    if (a.district) {
+      districtCounts[a.district] = (districtCounts[a.district] || 0) + 1;
+    }
+  });
+  const uniqueDistricts = Object.keys(districtCounts).length;
+  const topDistrictsStr = Object.entries(districtCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([dist, cnt]) => `${dist} (${cnt})`)
+    .join(', ');
 
   const cards = [
     {
@@ -34,21 +48,21 @@ export const KPICards: React.FC<KPICardsProps> = ({ applications, currentLang })
     {
       title: currentLang === 'ta' ? 'செய்தியாளர்கள்' : 'Reporters',
       value: reporters,
-      sub: `${Math.round((reporters / (total || 1)) * 100)}% of total`,
+      sub: total > 0 ? `${Math.round((reporters / total) * 100)}% of total` : '0%',
       icon: <Newspaper size={22} color="#b45309" />,
       bg: '#fef3c7'
     },
     {
       title: currentLang === 'ta' ? 'புகைப்படக் கலைஞர்கள்' : 'Photojournalists',
       value: photojournalists,
-      sub: `${Math.round((photojournalists / (total || 1)) * 100)}% of total`,
+      sub: total > 0 ? `${Math.round((photojournalists / total) * 100)}% of total` : '0%',
       icon: <Camera size={22} color="#15803d" />,
       bg: '#f0fdf4'
     },
     {
       title: currentLang === 'ta' ? 'வீடியோ செய்தியாளர்கள்' : 'Video Journalists',
       value: videoJournalists,
-      sub: `${Math.round((videoJournalists / (total || 1)) * 100)}% of total`,
+      sub: total > 0 ? `${Math.round((videoJournalists / total) * 100)}% of total` : '0%',
       icon: <Video size={22} color="#4338ca" />,
       bg: '#e0e7ff'
     },
@@ -65,6 +79,13 @@ export const KPICards: React.FC<KPICardsProps> = ({ applications, currentLang })
       sub: 'Journalism background',
       icon: <Award size={22} color="#7e22ce" />,
       bg: '#f3e8ff'
+    },
+    {
+      title: currentLang === 'ta' ? 'மாவட்ட வாரியான பங்களிப்பு' : 'District-wise Totals',
+      value: `${uniqueDistricts} ${currentLang === 'ta' ? 'மாவட்டங்கள்' : 'Districts'}`,
+      sub: topDistrictsStr || (currentLang === 'ta' ? 'தகவல் இல்லை' : 'No records yet'),
+      icon: <MapPin size={22} color="#059669" />,
+      bg: '#ecfdf5'
     }
   ];
 

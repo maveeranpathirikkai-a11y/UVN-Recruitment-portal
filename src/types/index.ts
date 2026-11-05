@@ -99,13 +99,31 @@ export interface ApplicationFormData {
   consentContact: boolean;
 }
 
-export interface ApplicationRecord extends ApplicationFormData {
+export interface ApplicationRecord extends Omit<Partial<ApplicationFormData>, 'positionAppliedFor' | 'workType' | 'journalismExperience'> {
   id: string;
   applicationId: string;
+  status: ApplicationStatus;
   applicationStatus: ApplicationStatus;
   timestamp: string;
-  lastUpdated: string;
+  lastUpdated?: string;
+  state: string;
+  district: string;
+  taluk: string;
+  name: string;
+  fullName: string;
+  mobile: string;
+  mobileNumber: string;
+  email: string;
+  position: PositionType | string;
+  positionAppliedFor: PositionType | string;
+  workType: WorkType | string;
+  education: string;
+  educationalQualification: string;
+  experience: YesNo | string;
+  journalismExperience: YesNo | string;
+  experienceYears: string;
   recruitmentNotes: string;
+  notes?: string;
   resumeUrl?: string;
   certificateUrl?: string;
   photoUrl?: string;
@@ -127,4 +145,20 @@ export interface AdminUser {
   username: string;
   name: string;
   role: 'admin' | 'editor';
+  token?: string;
+  expiresAt?: number;
+}
+
+export interface DashboardStatistics {
+  total: number;
+  today: number;
+  reporter: number;
+  photojournalist: number;
+  videoJournalist: number;
+  fullTime: number;
+  partTime: number;
+  experienced: number;
+  freshers: number;
+  districtWise: Record<string, number>;
+  statusCounts: Record<string, number>;
 }

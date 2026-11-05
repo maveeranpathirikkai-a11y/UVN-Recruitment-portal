@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AuthService } from '../../services/auth';
 import { Language, AdminUser } from '../../types';
-import { ShieldCheck, Lock, User, AlertCircle, X } from 'lucide-react';
+import { ShieldCheck, Lock, User, AlertCircle, X, Loader2 } from 'lucide-react';
 
 interface AdminLoginProps {
   isOpen: boolean;
@@ -19,19 +19,27 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setLoading(true);
 
-    const result = AuthService.login(username, password);
-    if (result.success && result.user) {
-      onLoginSuccess(result.user);
-      onClose();
-    } else {
-      setError(result.message);
+    try {
+      const result = await AuthService.login(username, password);
+      if (result.success && result.user) {
+        onLoginSuccess(result.user);
+        onClose();
+      } else {
+        setError(result.message);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed. Please check credentials.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -48,7 +56,8 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
           <button
             type="button"
             onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
+            disabled={loading}
+            style={{ background: 'none', border: 'none', cursor: loading ? 'not-allowed' : 'pointer', padding: 4 }}
           >
             <X size={20} color="#64748b" />
           </button>
@@ -68,7 +77,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
               fontSize: '0.85rem',
               fontWeight: 600
             }}>
-              <AlertCircle size={16} />
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
               <span>{error}</span>
             </div>
           )}
@@ -84,6 +93,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
                 className="form-input"
                 style={{ paddingLeft: 36 }}
                 value={username}
+                disabled={loading}
                 onChange={(e) => setUsername(e.target.value)}
                 required
               />
@@ -103,22 +113,28 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
                 style={{ paddingLeft: 36 }}
                 placeholder="••••••••"
                 value={password}
+                disabled={loading}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
               <Lock size={16} color="#94a3b8" style={{ position: 'absolute', left: 12, top: 12 }} />
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>
-              Default credential: <code>admin</code> / <code>uvn2026</code>
             </div>
           </div>
 
           <button
             type="submit"
             className="btn btn-primary"
-            style={{ width: '100%', padding: '12px' }}
+            disabled={loading}
+            style={{ width: '100%', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           >
-            {currentLang === 'ta' ? 'உள்நுழைக' : 'Sign In to Dashboard'}
+            {loading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>{currentLang === 'ta' ? 'சரிபார்க்கிறது...' : 'Verifying credentials...'}</span>
+              </>
+            ) : (
+              <span>{currentLang === 'ta' ? 'உள்நுழைக' : 'Sign In to Dashboard'}</span>
+            )}
           </button>
         </form>
       </div>

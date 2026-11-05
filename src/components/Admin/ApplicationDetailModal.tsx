@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { ApplicationRecord, ApplicationStatus, Language } from '../../types';
 import { ApiService } from '../../services/api';
-import { X, User, Phone, Mail, MapPin, Briefcase, GraduationCap, FileText, CheckCircle, Save, Loader2, ExternalLink } from 'lucide-react';
+import { AuthService } from '../../services/auth';
+import { X, Phone, Mail, MapPin, Briefcase, CheckCircle, Save, Loader2, ExternalLink, Trash2, AlertTriangle } from 'lucide-react';
 
 interface ApplicationDetailModalProps {
   application: ApplicationRecord | null;
   onClose: () => void;
   onUpdate: () => void;
+  onRemove?: () => void;
   currentLang: Language;
 }
 
@@ -14,23 +16,59 @@ export const ApplicationDetailModal: React.FC<ApplicationDetailModalProps> = ({
   application,
   onClose,
   onUpdate,
+  onRemove,
   currentLang
 }) => {
-  if (!application) return null;
-
-  const [status, setStatus] = useState<ApplicationStatus>(application.applicationStatus);
-  const [notes, setNotes] = useState<string>(application.recruitmentNotes || '');
+  const isAuthorized = AuthService.isAuthenticated();
+  const [status, setStatus] = useState<ApplicationStatus>(application?.applicationStatus || 'New');
+  const [notes, setNotes] = useState<string>(application?.recruitmentNotes || '');
   const [saving, setSaving] = useState<boolean>(false);
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Admin Remove Application states
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState<boolean>(false);
+  const [removing, setRemoving] = useState<boolean>(false);
+  const [removeSuccess, setRemoveSuccess] = useState<boolean>(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  if (!application) return null;
 
   const handleSave = async () => {
     setSaving(true);
     setSavedSuccess(false);
-    await ApiService.updateApplication(application.applicationId, status, notes);
-    setSaving(false);
-    setSavedSuccess(true);
-    onUpdate();
-    setTimeout(() => setSavedSuccess(false), 2500);
+    setSaveError(null);
+    try {
+      await ApiService.updateApplication(application.applicationId, status, notes);
+      setSaving(false);
+      setSavedSuccess(true);
+      onUpdate();
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (err: any) {
+      setSaving(false);
+      setSaveError(err.message || 'Failed to update application in Google Sheets.');
+    }
+  };
+
+  const handleRemove = async () => {
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      await ApiService.deleteApplication(application.applicationId);
+      setRemoving(false);
+      setRemoveSuccess(true);
+      setTimeout(() => {
+        if (onRemove) {
+          onRemove();
+        } else {
+          onUpdate();
+          onClose();
+        }
+      }, 1000);
+    } catch (err: any) {
+      setRemoving(false);
+      setRemoveError(err.message || 'Failed to remove application from Google Sheets.');
+    }
   };
 
   const statusOptions: ApplicationStatus[] = [
@@ -236,23 +274,194 @@ export const ApplicationDetailModal: React.FC<ApplicationDetailModalProps> = ({
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginTop: 12 }}>
-              {savedSuccess && (
-                <span style={{ color: '#16a34a', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <CheckCircle size={16} /> Updated successfully!
-                </span>
+            {saveError && (
+              <div style={{
+                background: '#fef2f2',
+                border: '1px solid #fca5a5',
+                color: '#991b1b',
+                padding: '8px 12px',
+                borderRadius: 6,
+                fontSize: '0.825rem',
+                fontWeight: 600,
+                marginTop: 10
+              }}>
+                {saveError}
+              </div>
+            )}
+
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 12,
+              marginTop: 14,
+              paddingTop: 12,
+              borderTop: '1px solid #fde68a'
+            }}>
+              {isAuthorized && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRemoveConfirm(true);
+                    setRemoveError(null);
+                  }}
+                  disabled={saving || removing}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '7px 14px',
+                    background: '#ffffff',
+                    border: '1px solid #ef4444',
+                    borderRadius: 6,
+                    color: '#dc2626',
+                    fontSize: '0.825rem',
+                    fontWeight: 600,
+                    cursor: (saving || removing) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  <Trash2 size={15} />
+                  <span>{currentLang === 'ta' ? 'விண்ணப்பத்தை நீக்கு' : 'Remove Application'}</span>
+                </button>
               )}
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleSave}
-                disabled={saving}
-                style={{ padding: '8px 18px' }}
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                <span>Save Changes</span>
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
+                {savedSuccess && (
+                  <span style={{ color: '#16a34a', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <CheckCircle size={16} /> Updated successfully in Google Sheets!
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSave}
+                  disabled={saving || removing}
+                  style={{ padding: '8px 18px' }}
+                >
+                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  <span>Save Changes</span>
+                </button>
+              </div>
             </div>
+
+            {/* Admin-only Application Removal Confirmation Dialog */}
+            {showRemoveConfirm && (
+              <div style={{
+                marginTop: 14,
+                background: '#fef2f2',
+                border: '1.5px solid #f87171',
+                borderRadius: 8,
+                padding: 16
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <AlertTriangle size={22} color="#dc2626" style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ margin: '0 0 6px 0', fontSize: '0.925rem', fontWeight: 700, color: '#991b1b' }}>
+                      {currentLang === 'ta' ? 'விண்ணப்பத்தை நீக்குவதை உறுதிப்படுத்தவும்' : 'Confirm Application Removal'}
+                    </h4>
+                    <p style={{ margin: '0 0 10px 0', fontSize: '0.825rem', color: '#7f1d1d' }}>
+                      {currentLang === 'ta'
+                        ? 'இந்த விண்ணப்பதாரரை ஆட்சேர்ப்பு தரவுத்தளத்தில் இருந்து நிரந்தரமாக நீக்க விரும்புகிறீர்களா? இந்த செயல்முறை மாற்ற முடியாதது.'
+                        : 'Are you sure you want to permanently remove this application from the recruitment database? This action cannot be undone.'}
+                    </p>
+
+                    <div style={{
+                      background: '#ffffff',
+                      border: '1px solid #fecaca',
+                      borderRadius: 6,
+                      padding: '8px 12px',
+                      fontSize: '0.825rem',
+                      marginBottom: 12
+                    }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px' }}>
+                        <span style={{ color: '#64748b', fontWeight: 600 }}>Candidate Name:</span>
+                        <strong style={{ color: '#0f172a' }}>{application.fullName}</strong>
+                        <span style={{ color: '#64748b', fontWeight: 600 }}>Application ID:</span>
+                        <code style={{ color: '#991b1b', fontWeight: 700 }}>{application.applicationId}</code>
+                        <span style={{ color: '#64748b', fontWeight: 600 }}>Position:</span>
+                        <span>{application.positionAppliedFor}</span>
+                      </div>
+                    </div>
+
+                    {removeError && (
+                      <div style={{
+                        background: '#fee2e2',
+                        border: '1px solid #ef4444',
+                        color: '#991b1b',
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        marginBottom: 10
+                      }}>
+                        {removeError}
+                      </div>
+                    )}
+
+                    {removeSuccess && (
+                      <div style={{
+                        background: '#dcfce7',
+                        border: '1px solid #22c55e',
+                        color: '#15803d',
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        marginBottom: 10,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}>
+                        <CheckCircle size={15} />
+                        {currentLang === 'ta' ? 'விண்ணப்பம் வெற்றிகரமாக நீக்கப்பட்டது!' : 'Application removed successfully from Google Sheets!'}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        disabled={removing || removeSuccess}
+                        onClick={() => setShowRemoveConfirm(false)}
+                        style={{
+                          padding: '6px 14px',
+                          background: '#ffffff',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: 6,
+                          fontSize: '0.825rem',
+                          fontWeight: 600,
+                          color: '#475569',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {currentLang === 'ta' ? 'ரத்துசெய்' : 'Cancel'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={removing || removeSuccess}
+                        onClick={handleRemove}
+                        style={{
+                          padding: '6px 16px',
+                          background: '#dc2626',
+                          border: 'none',
+                          borderRadius: 6,
+                          fontSize: '0.825rem',
+                          fontWeight: 700,
+                          color: '#ffffff',
+                          cursor: (removing || removeSuccess) ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6
+                        }}
+                      >
+                        {removing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        <span>{currentLang === 'ta' ? 'ஆம், விண்ணப்பத்தை நீக்கு' : 'Yes, Remove Application'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

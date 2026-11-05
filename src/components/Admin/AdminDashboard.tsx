@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { ApplicationRecord, FilterState, Language, AdminUser } from '../../types';
 import { ApiService } from '../../services/api';
-import { AuthService } from '../../services/auth';
 import { KPICards } from './KPICards';
 import { ApplicationDetailModal } from './ApplicationDetailModal';
 import { GASConfigModal } from './GASConfigModal';
 import { LOCATION_MASTER_DATA, getDistrictsForState } from '../../data/locations';
 import { 
   Search, 
-  Filter, 
   Download, 
   Cloud, 
   LogOut, 
@@ -17,8 +15,9 @@ import {
   ChevronRight, 
   RefreshCw,
   ShieldCheck,
-  CheckCircle2,
-  Calendar
+  AlertTriangle,
+  Loader2,
+  Inbox
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -36,6 +35,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [selectedApp, setSelectedApp] = useState<ApplicationRecord | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const itemsPerPage = 8;
 
   // Filters State
@@ -51,43 +52,60 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   });
 
   const loadData = async () => {
-    const data = await ApiService.getApplications();
-    setApplications(data);
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await ApiService.getApplications(undefined, currentUser.token);
+      setApplications(data);
+      setLoading(false);
+    } catch (err: any) {
+      console.error('Failed to fetch live applications:', err);
+      setError(err.message || 'Failed to fetch live applications from Google Sheets.');
+      setApplications([]);
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     loadData();
   }, []);
 
-  // Filter logic
+  // Client-side filter logic over the live dataset
   const filteredApps = applications.filter((app) => {
     // Search query: ID, Name, Mobile, Email
     if (filters.searchQuery) {
-      const q = filters.searchQuery.toLowerCase();
-      const matchId = app.applicationId.toLowerCase().includes(q);
-      const matchName = app.fullName.toLowerCase().includes(q);
-      const matchMobile = app.mobileNumber.includes(q);
-      const matchEmail = app.email.toLowerCase().includes(q);
+      const q = filters.searchQuery.toLowerCase().trim();
+      const matchId = String(app.applicationId || '').toLowerCase().includes(q);
+      const matchName = String(app.name || app.fullName || '').toLowerCase().includes(q);
+      const matchMobile = String(app.mobile || app.mobileNumber || '').includes(q);
+      const matchEmail = String(app.email || '').toLowerCase().includes(q);
       if (!matchId && !matchName && !matchMobile && !matchEmail) return false;
     }
 
     // State filter
-    if (filters.state && app.state !== filters.state) return false;
+    if (filters.state && String(app.state || '').toLowerCase() !== filters.state.toLowerCase()) return false;
 
     // District filter
-    if (filters.district && app.district !== filters.district) return false;
+    if (filters.district && String(app.district || '').toLowerCase() !== filters.district.toLowerCase()) return false;
 
     // Position filter
-    if (filters.position && app.positionAppliedFor !== filters.position) return false;
+    if (filters.position) {
+      const p = String(app.position || app.positionAppliedFor || '');
+      if (p !== filters.position) return false;
+    }
 
     // Experience filter
     if (filters.experience) {
-      if (filters.experience === 'Experienced' && app.journalismExperience !== 'Yes') return false;
-      if (filters.experience === 'Fresher' && app.journalismExperience !== 'No') return false;
+      const expVal = String(app.experience || app.journalismExperience || '').toLowerCase();
+      if (filters.experience === 'Experienced' && expVal !== 'yes') return false;
+      if (filters.experience === 'Fresher' && expVal !== 'no') return false;
     }
 
     // Status filter
-    if (filters.status && app.applicationStatus !== filters.status) return false;
+    if (filters.status) {
+      const st = String(app.status || app.applicationStatus || '');
+      if (st !== filters.status) return false;
+    }
 
     // Work type filter
     if (filters.workType && app.workType !== filters.workType) return false;
@@ -99,7 +117,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const totalPages = Math.ceil(filteredApps.length / itemsPerPage) || 1;
   const paginatedApps = filteredApps.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  // CSV Export handler
+  // CSV Export handler (Uses real live records)
   const handleExportCSV = () => {
     if (filteredApps.length === 0) {
       alert('No applications match the current filter to export.');
@@ -113,23 +131,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     ];
 
     const rows = filteredApps.map(a => [
-      `"${a.applicationId}"`,
-      `"${new Date(a.timestamp).toLocaleString()}"`,
-      `"${a.applicationStatus}"`,
-      `"${a.fullName.replace(/"/g, '""')}"`,
-      `"${a.positionAppliedFor}"`,
-      `"${a.state}"`,
-      `"${a.district}"`,
-      `"${a.taluk}"`,
-      `"${a.mobileNumber}"`,
-      `"${a.whatsAppNumber || a.mobileNumber}"`,
-      `"${a.email}"`,
-      `"${a.workType}"`,
-      `"${a.journalismExperience}"`,
+      `"${a.applicationId || ''}"`,
+      `"${a.timestamp ? new Date(a.timestamp).toLocaleString() : ''}"`,
+      `"${a.applicationStatus || 'New'}"`,
+      `"${(a.fullName || '').replace(/"/g, '""')}"`,
+      `"${a.positionAppliedFor || ''}"`,
+      `"${a.state || ''}"`,
+      `"${a.district || ''}"`,
+      `"${a.taluk || ''}"`,
+      `"${a.mobileNumber || ''}"`,
+      `"${a.whatsAppNumber || a.mobileNumber || ''}"`,
+      `"${a.email || ''}"`,
+      `"${a.workType || ''}"`,
+      `"${a.journalismExperience || ''}"`,
       `"${a.experienceYears || '0'}"`,
       `"${(a.previousOrganisation || '').replace(/"/g, '""')}"`,
-      `"${a.educationalQualification}"`,
-      `"${a.cameraAvailability}"`,
+      `"${a.educationalQualification || ''}"`,
+      `"${a.cameraAvailability || ''}"`,
       `"${(a.recruitmentNotes || '').replace(/"/g, '""')}"`
     ]);
 
@@ -137,7 +155,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `UVN_Recruitment_Applications_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `UVN_Recruitment_Live_Applications_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -179,7 +197,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               Editorial Recruitment Board
             </h1>
             <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-              Logged in as: <strong>{currentUser.name}</strong> ({currentUser.role})
+              Connected to: <strong>Google Sheets Database</strong> | Logged in as: <strong>{currentUser.name}</strong>
             </div>
           </div>
         </div>
@@ -189,11 +207,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             type="button"
             className="btn btn-secondary"
             onClick={loadData}
-            title="Refresh application list"
+            disabled={loading}
+            title="Fetch latest applications from Google Sheets"
             style={{ padding: '8px 14px', fontSize: '0.85rem' }}
           >
-            <RefreshCw size={15} />
-            <span>Refresh</span>
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            <span>{loading ? 'Fetching...' : 'Refresh'}</span>
           </button>
 
           <button
@@ -210,6 +229,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             type="button"
             className="btn btn-gold"
             onClick={handleExportCSV}
+            disabled={loading || applications.length === 0}
             style={{ padding: '8px 14px', fontSize: '0.85rem' }}
           >
             <Download size={15} />
@@ -228,7 +248,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       </div>
 
-      {/* KPI Cards Overview */}
+      {/* Backend Error Alert Banner */}
+      {error && (
+        <div style={{
+          background: '#fef2f2',
+          border: '1px solid #fca5a5',
+          borderRadius: 12,
+          padding: '16px 20px',
+          marginBottom: 24,
+          boxShadow: 'var(--shadow-sm)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <AlertTriangle size={24} color="#dc2626" style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: 1 }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#991b1b', marginBottom: 4 }}>
+                Unable to load live recruitment data from Google Sheets
+              </h3>
+              <p style={{ fontSize: '0.875rem', color: '#7f1d1d', lineHeight: 1.5, marginBottom: 12 }}>
+                {error}
+              </p>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={loadData}
+                  style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                >
+                  <RefreshCw size={14} />
+                  <span>Retry Connection</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setIsGasModalOpen(true)}
+                  style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                >
+                  <Cloud size={14} />
+                  <span>Verify Web App Settings</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* KPI Cards Overview (Derived strictly from live records) */}
       <KPICards applications={applications} currentLang={currentLang} />
 
       {/* Filter and Search Bar */}
@@ -249,7 +313,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 type="text"
                 className="form-input"
                 style={{ paddingLeft: 36 }}
-                placeholder="Search candidates..."
+                placeholder="Search live candidates..."
                 value={filters.searchQuery}
                 onChange={(e) => {
                   setFilters({ ...filters, searchQuery: e.target.value });
@@ -353,10 +417,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Clear Filters */}
+        {/* Filter Summary */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
           <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-            Showing <strong>{filteredApps.length}</strong> of <strong>{applications.length}</strong> candidates
+            Showing <strong>{filteredApps.length}</strong> of <strong>{applications.length}</strong> live applications
           </div>
 
           {(filters.searchQuery || filters.state || filters.district || filters.position || filters.experience || filters.status) && (
@@ -413,16 +477,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </tr>
             </thead>
             <tbody>
-              {paginatedApps.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
-                    No recruitment applications match your current filters.
+                  <td colSpan={8} style={{ padding: '50px 20px', textAlign: 'center', color: '#64748b' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                      <Loader2 size={28} className="animate-spin" color="var(--color-primary-red)" />
+                      <span style={{ fontWeight: 600 }}>Loading live recruitment records from Google Sheets...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginatedApps.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: '48px 20px', textAlign: 'center', color: '#64748b' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                      <Inbox size={32} color="#94a3b8" />
+                      <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>
+                        {error ? 'Unable to display records due to connection error.' : 'No applications found in the Google Sheets database.'}
+                      </span>
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                        {error ? 'Check Google Apps Script Web App authorization above.' : 'New submissions from the public recruitment form will appear here automatically.'}
+                      </span>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 paginatedApps.map((app) => (
                   <tr
-                    key={app.id}
+                    key={app.id || app.applicationId}
                     style={{ borderBottom: '1px solid var(--color-border)', transition: 'background-color 0.15s ease' }}
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#fafafa'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
@@ -431,7 +512,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       {app.applicationId}
                     </td>
                     <td style={{ padding: '12px 16px', fontSize: '0.8rem', color: '#64748b' }}>
-                      {new Date(app.timestamp).toLocaleDateString()}
+                      {app.timestamp ? new Date(app.timestamp).toLocaleDateString() : '—'}
                     </td>
                     <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--color-ink)' }}>
                       <div>{app.fullName}</div>
@@ -445,7 +526,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{app.taluk}</div>
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      {app.journalismExperience === 'Yes' ? (
+                      {String(app.journalismExperience || '').toLowerCase() === 'yes' ? (
                         <span style={{ color: '#047857', fontWeight: 600, fontSize: '0.85rem' }}>
                           {app.experienceYears} Years
                         </span>
@@ -454,8 +535,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       )}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      <span className={`status-pill status-${app.applicationStatus.replace(/\s+/g, '')}`}>
-                        {app.applicationStatus}
+                      <span className={`status-pill status-${(app.applicationStatus || 'New').replace(/\s+/g, '')}`}>
+                        {app.applicationStatus || 'New'}
                       </span>
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
@@ -477,41 +558,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         {/* Pagination Bar */}
-        <div style={{
-          padding: '14px 20px',
-          borderTop: '1px solid var(--color-border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: '#fafafa'
-        }}>
-          <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-            Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
-          </div>
+        {!loading && paginatedApps.length > 0 && (
+          <div style={{
+            padding: '14px 20px',
+            borderTop: '1px solid var(--color-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: '#fafafa'
+          }}>
+            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+              Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
+            </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
-              disabled={currentPage === 1}
-              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-            >
-              <ChevronLeft size={16} />
-              <span>Prev</span>
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
-              disabled={currentPage === totalPages}
-              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-            >
-              <span>Next</span>
-              <ChevronRight size={16} />
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              >
+                <ChevronLeft size={16} />
+                <span>Prev</span>
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              >
+                <span>Next</span>
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Application Detail Modal */}
@@ -519,13 +602,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <ApplicationDetailModal
           application={selectedApp}
           onClose={() => setSelectedApp(null)}
-          onUpdate={() => {
-            loadData();
-            // Also refresh selected application object
-            ApiService.getApplications().then(all => {
-              const fresh = all.find(a => a.applicationId === selectedApp.applicationId);
-              if (fresh) setSelectedApp(fresh);
-            });
+          onRemove={async () => {
+            setSelectedApp(null);
+            await loadData();
+          }}
+          onUpdate={async () => {
+            // Re-fetch live data from Google Sheets and keep modal state in sync
+            try {
+              const freshData = await ApiService.getApplications(undefined, currentUser.token);
+              setApplications(freshData);
+              const updated = freshData.find(a => a.applicationId === selectedApp.applicationId);
+              if (updated) {
+                setSelectedApp(updated);
+              } else {
+                setSelectedApp(null);
+              }
+            } catch (err) {
+              await loadData();
+            }
           }}
           currentLang={currentLang}
         />
@@ -534,7 +628,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Google Apps Script Sync Config Modal */}
       <GASConfigModal
         isOpen={isGasModalOpen}
-        onClose={() => setIsGasModalOpen(false)}
+        onClose={() => {
+          setIsGasModalOpen(false);
+          loadData();
+        }}
         currentLang={currentLang}
       />
     </div>
